@@ -202,6 +202,36 @@
       "code": "#",
       "label": "饼干盒",
       "span": 2
+    },
+    {
+      "file": "refs/ice-flower-blue.png",
+      "code": "C",
+      "label": "蓝色花形冰障",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/ice-flower-blue-edge.png",
+      "code": "C",
+      "label": "蓝色花形冰障",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/ice-flower-green.png",
+      "code": "V",
+      "label": "绿色花形冰障",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/ice-flower-green-edge.png",
+      "code": "V",
+      "label": "绿色花形冰障",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/purple-penguin.png",
+      "code": "W",
+      "label": "紫色企鹅目标",
+      "kind": "obstacle"
     }
   ],
   "maxDistanceByCode": {
@@ -209,7 +239,10 @@
     "L": 0.065,
     "F": 0.105,
     "D": 0.09,
-    "~": 0.07
+    "~": 0.07,
+    "C": 0.11,
+    "V": 0.11,
+    "W": 0.12
   },
   "minMarginByCode": {
     "L": 0.012
@@ -220,6 +253,9 @@
     "R": "红色",
     "G": "绿色",
     "B": "蓝色",
-    "Y": "黄色"
+    "Y": "黄色",
+    "C": "蓝色",
+    "V": "绿色",
+    "W": "紫色"
   }
 }

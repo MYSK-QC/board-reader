@@ -74,6 +74,21 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   assert.match(result.coordinateMap, /1\/168.*~.*P/);
   assert.equal(result.cells[1].color, '紫色');
   assert.equal(result.cells[5].typeId, 'learned:a');
+  const quick = readBoard(a, calibration, {learnedDir, includeMovable: true});
+  assert.equal(quick.cells[5].typeId, 'learned:a');
+  assert.equal(quick.cells[5].movable, false);
+  assert.equal(quick.cells[1].movable, true);
+
+  let geometry;
+  const cold = readBoard(a, calibration, {onGeometry: value => {geometry = value;}});
+  assert.equal(cold.ok, true, cold.reason);
+  let reusedGeometry;
+  const warm = readBoard(PNG.sync.read(a), calibration, {
+    geometryHint: geometry, onGeometry: (_next, reused) => {reusedGeometry = reused;}
+  });
+  assert.equal(warm.grid, cold.grid);
+  assert.equal(reusedGeometry, true);
+  assert.equal(readBoard(blank, calibration, {geometryHint: geometry}).ok, false);
 
   const overflowDir = path.join(dir, 'overflow');
   fs.mkdirSync(overflowDir);

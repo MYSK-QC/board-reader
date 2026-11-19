@@ -10,6 +10,7 @@ const { performance } = require('node:perf_hooks');
 const PROFILE = process.env.XXL_CAPTURE_PROFILE ||
   path.join(os.homedir(), '.xxl-capture.json');
 
+const MAX_SCREEN_BYTES = 48 * 1024 * 1024;
 const PNG_MAGIC = Buffer.from([
   137, 80, 78, 71, 13, 10, 26, 10
 ]);
@@ -42,7 +43,7 @@ function run(adb, args, timeout = 3000, signal) {
     child.stdout.on('data', chunk => {
       size += chunk.length;
 
-      if (size > 16 * 1024 * 1024) {
+      if (size > MAX_SCREEN_BYTES) {
         child.kill('SIGKILL');
         return;
       }
@@ -61,7 +62,7 @@ function run(adb, args, timeout = 3000, signal) {
 
       if (timedOut) return finishError(new Error('ADB timeout'));
       if (signal?.aborted) return finishError(new Error('Aborted'));
-      if (size > 16 * 1024 * 1024) {
+      if (size > MAX_SCREEN_BYTES) {
         return finishError(new Error('Screenshot too large'));
       }
 
@@ -116,15 +117,33 @@ function checkPNG(data) {
   return data;
 }
 
+function decodeRaw(data) {
+  if (!Buffer.isBuffer(data) || data.length < 16) throw new Error('Truncated raw screenshot');
+  const width = data.readUInt32LE(0);
+  const height = data.readUInt32LE(4);
+  const format = data.readUInt32LE(8);
+  if (!width || !height || width > 8192 || height > 8192 || (format !== 1 && format !== 2)) {
+    throw new Error('Unsupported raw screenshot format');
+  }
+  const header = data.length - width * height * 4;
+  if (header !== 12 && header !== 16) throw new Error('Unexpected raw screenshot size');
+  return {width, height, data: data.subarray(header)};
+}
+
 async function captureMode(adb, serial, mode, signal) {
   const prefix = ['-s', serial];
 
+  if (mode === 'raw') {
+    const data = await run(adb, [...prefix, 'exec-out', 'su', '-c', 'screencap'], 3500, signal);
+    return {image: decodeRaw(data)};
+  }
+
   if (mode === 'pipe') {
-    return checkPNG(await run(adb, [
+    return {png:checkPNG(await run(adb, [
       ...prefix,
       'exec-out',
       'su', '-c', 'screencap -p'
-    ], 3500, signal));
+    ], 3500, signal))};
   }
 
   if (mode !== 'pull') throw new Error('Invalid capture mode');
@@ -144,7 +163,7 @@ async function captureMode(adb, serial, mode, signal) {
       ...prefix, 'pull', remote, local
     ], 3500, signal);
 
-    return checkPNG(fs.readFileSync(local));
+    return {png:checkPNG(fs.readFileSync(local))};
   } finally {
     try { fs.unlinkSync(local); } catch {}
 
@@ -161,53 +180,42 @@ function readProfile() {
   catch { return {}; }
 }
 
+const unsupportedRaw = new Set();
+
 async function capture(options = {}) {
   const adb = options.adb || 'adb';
-  const serial = await selectSerial(
-    adb, options.serial || process.env.ANDROID_SERIAL
-  );
-
+  const serial = await selectSerial(adb, options.serial || process.env.ANDROID_SERIAL);
   const configured = options.mode || process.env.XXL_CAPTURE || 'auto';
-  const profile = readProfile();
-
-  const mode = configured === 'auto'
-    ? profile[serial] || 'pipe'
-    : configured;
-
+  const key = adb + '\0' + serial;
+  const modes = options.allowRaw && !unsupportedRaw.has(key) ? ['raw', 'pipe', 'pull'] : ['pipe', 'pull'];
+  const preferred = configured === 'auto' ? readProfile()[serial] : undefined;
+  if (modes.includes(preferred)) modes.unshift(...modes.splice(modes.indexOf(preferred), 1));
+  const candidates = configured === 'auto' ? modes : [configured];
   const started = performance.now();
-
-  try {
-    const png = await captureMode(adb, serial, mode, options.signal);
-
-    return {
-      png,
-      serial,
-      mode,
-      captureMs: Math.round(performance.now() - started)
-    };
-  } catch (e) {
-    if (configured !== 'auto') throw e;
-
-    const fallback = mode === 'pipe' ? 'pull' : 'pipe';
-    const png = await captureMode(adb, serial, fallback, options.signal);
-
-    return {
-      png,
-      serial,
-      mode: fallback,
-      captureMs: Math.round(performance.now() - started)
-    };
+  let lastError;
+  for (const mode of candidates) {
+    try {
+      const frame = await captureMode(adb, serial, mode, options.signal);
+      return { ...frame, serial, mode, captureMs: Math.round(performance.now() - started) };
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (mode === 'raw' && /(?:raw screenshot format|raw screenshot size)/.test(error.message)) {
+        unsupportedRaw.add(key);
+      }
+      lastError = error;
+    }
   }
+  throw lastError;
 }
 
 async function benchmark(adb = 'adb', requestedSerial) {
   const serial = await selectSerial(adb, requestedSerial);
-  const samples = { pipe: [], pull: [] };
+  const samples = { raw: [], pipe: [], pull: [] };
   const errors = {};
 
   // Alternate modes to reduce warm-up/order bias.
   for (let i = 0; i < 3; i++) {
-    for (const mode of ['pipe', 'pull']) {
+    for (const mode of Object.keys(samples)) {
       try {
         const start = performance.now();
         await captureMode(adb, serial, mode);
@@ -224,14 +232,11 @@ async function benchmark(adb = 'adb', requestedSerial) {
     return s[Math.floor(s.length / 2)];
   };
 
-  const pipe = median(samples.pipe);
-  const pull = median(samples.pull);
-
-  if (!Number.isFinite(pipe) && !Number.isFinite(pull)) {
-    throw new Error(`Both capture modes failed: ${JSON.stringify(errors)}`);
+  const times = Object.fromEntries(Object.entries(samples).map(([mode, runs]) => [mode, median(runs)]));
+  const selected = Object.keys(times).sort((a, b) => times[a] - times[b])[0];
+  if (!Number.isFinite(times[selected])) {
+    throw new Error(`All capture modes failed: ${JSON.stringify(errors)}`);
   }
-
-  const selected = pipe <= pull ? 'pipe' : 'pull';
   const profile = readProfile();
   profile[serial] = selected;
 
@@ -239,8 +244,8 @@ async function benchmark(adb = 'adb', requestedSerial) {
 
   return {
     serial,
-    pipeMs: Number.isFinite(pipe) ? Math.round(pipe) : null,
-    pullMs: Number.isFinite(pull) ? Math.round(pull) : null,
+    ...Object.fromEntries(Object.entries(times).map(([mode, ms]) =>
+      [mode + 'Ms', Number.isFinite(ms) ? Math.round(ms) : null])),
     selected,
     errors
   };
@@ -255,4 +260,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { capture, benchmark };
+module.exports = { capture, benchmark, decodeRaw };

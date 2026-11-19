@@ -193,6 +193,7 @@ function scan(im, cal, lattice, keepCells = false) {
   const cells = [];
   const [top, bottom] = cal.searchY ?? [.22, .87];
   let score = 0;
+  let strong = 0;
   for (let row = Math.ceil((im.height * top - y) / s); y + (row + 1) * s <= im.height * bottom; row ++) {
     for (let col = Math.ceil(-x / s); x + (col + 1) * s <= im.width + .01; col ++) {
       const left = x + col * s;
@@ -202,11 +203,14 @@ function scan(im, cal, lattice, keepCells = false) {
       const limit = cal.anchorDistance ?? .19;
       const anchor = best && best[1] < limit &&
         (second?.[1] ?? Infinity) - best[1] >= (cal.minMargin ?? .035);
-      if (anchor) score += 1 - .75 * best[1] / limit;
+      if (anchor) {
+        score += 1 - .75 * best[1] / limit;
+        if (best[1] <= limit * .70) strong++;
+      }
       if (keepCells) cells.push({ row, col, left, upper, f, anchor });
     }
   }
-  return { ...lattice, cells, score };
+  return { ...lattice, cells, score, strong };
 }
 
 function detect(im, cal) {
@@ -244,6 +248,24 @@ function detect(im, cal) {
   const different = ranked.find(g => !aligned(best, g, .26));
   if (different && different.score >= best.score * .96) return null;
   return best;
+}
+
+function reuseLattice(im, cal, hint) {
+  if (!hint || hint.width !== im.width || hint.height !== im.height) return null;
+  const {x, y, s} = hint;
+  if (![x, y, s].every(Number.isFinite) || s < 8 || s > im.width / 2) return null;
+  const candidate = scan(im, cal, {x, y, s}, true);
+  const anchorCells = candidate.cells.filter(cell => cell.anchor);
+  const confirmed = anchorCells.filter(cell => cal.anchorCodes.has(classify(cell.f, cal)));
+  if (candidate.strong < 4 || candidate.score < anchorCells.length * .40 || confirmed.length < 4 ||
+      new Set(confirmed.map(c => c.row)).size < 2 ||
+      new Set(confirmed.map(c => c.col)).size < 2) return null;
+
+  for (const [dx, dy, ds] of [[.14,0,0],[-.14,0,0],[0,.14,0],[0,-.14,0],[0,0,.045],[0,0,-.045]]) {
+    const alternative = scan(im, cal, {x:x+dx*s, y:y+dy*s, s:s*(1+ds)});
+    if (alternative.score > candidate.score * 1.14 + .20) return null;
+  }
+  return candidate;
 }
 
 function aligned(a, b, tolerance) {
@@ -373,18 +395,27 @@ function readBoard(png, calibrationFile, options = {}) {
   try {
     const reference = loadCalibration(calibrationFile);
     const nonAnchors = new Set(['.', '~', ...reference.obstacles, ...reference.specials]);
-    const cal = { ...reference, anchors: reference.samples.filter(s => !nonAnchors.has(s.code)) };
-    const frames = [png, ...(options.frames ?? [])].map(data => PNG.sync.read(data));
+    const anchors = reference.samples.filter(s => !nonAnchors.has(s.code));
+    const cal = { ...reference, anchors, anchorCodes: new Set(anchors.map(sample => sample.code)) };
+    const frames = [png, ...(options.frames ?? [])].map(data =>
+      Buffer.isBuffer(data) ? PNG.sync.read(data) : data);
+    if (frames.some(im => !Number.isInteger(im?.width) || im.width <= 0 ||
+        !Number.isInteger(im.height) || im.height <= 0 ||
+        im.data?.length !== im.width * im.height * 4)) return fail('Invalid screenshot');
     if (frames.some(im => im.width !== frames[0].width || im.height !== frames[0].height)) {
       return fail('Screen size changed between frames');
     }
-    const boards = frames.map(im => detect(im, cal));
-    const board = boards[0];
-    if (!board || boards.some(g => !g || !aligned(board, g, .17))) {
+    const [first, ...rest] = frames;
+    const reused = reuseLattice(first, cal, options.geometryHint);
+    const board = reused ?? detect(first, cal);
+    if (!board) return fail('Board lattice missing, ambiguous or moving');
+    const geometry = {x:board.x, y:board.y, s:board.s, width:first.width, height:first.height};
+    const boards = rest.map(im => reuseLattice(im, cal, geometry) ?? detect(im, cal));
+    if (boards.some(g => !g || !aligned(board, g, .17))) {
       return fail('Board lattice missing, ambiguous or moving');
     }
     const stable = board.cells.map(cell => {
-      const matches = boards.slice(1).map(g => g.cells.find(other =>
+      const matches = boards.map(g => g.cells.find(other =>
         Math.abs(other.left - cell.left) < board.s * .18 &&
         Math.abs(other.upper - cell.upper) < board.s * .18));
       const observations = [cell, ...matches];
@@ -393,7 +424,7 @@ function readBoard(png, calibrationFile, options = {}) {
       const same = matches.every(other => other && distance(cell.f, other.f) <= .085);
       const code = same && codes.every(value => value === codes[0]) ? codes[0] : null;
       return { ...cell, code, observations: cal.multiCell.has(code) ? observations.map(other => other.f) : undefined,
-        novel: same && frames.length >= 2 && codes.every(value => !value) &&
+        novel: same && codes.every(value => !value) &&
         observations.every(other => other && cal.samples.every(sample =>
           distance(other.f, sample.f) >
             Math.max(sampleLimit(cal, sample), cal.anchorDistance ?? .19) + .035)) };
@@ -433,6 +464,10 @@ function readBoard(png, calibrationFile, options = {}) {
         distance(cell.f, other.f) <= .08);
       const repeated = adjacent && peers.length >= (interior ? 2 : 3);
       const known = interior && adjacent ? matchLearned(cell.f, learned) : undefined;
+      if (frames.length === 1) {
+        if (known) discoveries.set(cell, known);
+        continue;
+      }
       if (!enclosed && !repeated && !known) continue;
       const sample = known ?? identifyNovel(cell.f, options.learnedDir, learned);
       if (sample !== null) discoveries.set(cell, sample);
@@ -466,9 +501,11 @@ function readBoard(png, calibrationFile, options = {}) {
       }
       return result;
     });
+    if (options.includeMovable) for (const cell of cells) cell.movable = cell.status === 'known';
     for (const sample of learned) {
       if (sample.code !== '!') legend[sample.code] = sample.label;
     }
+    options.onGeometry?.(geometry, Boolean(reused));
     return {
       ok: true, rows, cols, legend, cells, coordinateMap: coordinateMap(cells, cols),
       grid: Array.from({ length: rows }, (_, r) => cells.slice(r*cols, (r+1)*cols).map(c => c.code).join('')).join('\n'),
