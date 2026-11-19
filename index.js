@@ -1,6 +1,8 @@
 'use strict';
 
 const path = require('node:path');
+const os = require('node:os');
+const { setTimeout: delay } = require('node:timers/promises');
 const { capture } = require('./capture.cjs');
 const { readBoard } = require('./board.cjs');
 
@@ -14,7 +16,7 @@ exports.apply = async function apply(ctx, config = {}) {
     name: 'xxl_board',
 
     description:
-      'Read the current 开心消消乐 9x9 board via rooted ADB. ' +
+      'Read the current 开心消消乐 board via rooted ADB. ' +
       'Returns text grid, legend and pixel coordinates. ' +
       'Ice and special tiles require calibration. ' +
       'Never guess uncertain cells.',
@@ -41,6 +43,7 @@ exports.apply = async function apply(ctx, config = {}) {
           x: { type: 'number' },
           y: { type: 'number' },
           cellSize: { type: 'number' },
+          cells: { type: 'array', items: { type: 'object', additionalProperties: true } },
           captureMs: { type: 'number' },
           reason: { type: 'string' }
         },
@@ -54,21 +57,29 @@ exports.apply = async function apply(ctx, config = {}) {
             '\nLegend: ' + JSON.stringify(result.legend) +
             `\nOrigin: (${result.x},${result.y})` +
             ` Cell: ${result.cellSize}px` +
-            ` Capture: ${result.captureMs}ms`
+            ` Capture: ${result.captureMs}ms` +
+            '\nCoordinates (row,col:x,y): ' + result.cells.filter(c => c.status !== 'hole')
+              .map(c => `${c.row},${c.col}:${c.x},${c.y}`).join(' ')
           : `Board unavailable: ${result.reason}`
       }]
     },
 
-    timeoutMs: 5000,
+    timeoutMs: 12000,
 
     async execute(args, execution) {
       try {
-        const frame = await capture({
+        const captureOptions = {
           adb: config.adb || 'adb',
           serial: args.serial || config.serial,
-          mode: config.mode || 'auto',
+          mode: config.mode || process.env.XXL_CAPTURE || 'auto',
           signal: execution?.signal
-        });
+        };
+        const frame = await capture(captureOptions);
+        let next;
+        if (config.frames !== 1) {
+          await delay(config.frameDelayMs ?? 75, undefined, { signal: captureOptions.signal });
+          next = await capture({ ...captureOptions, serial: frame.serial });
+        }
 
         const calibration = path.resolve(
           __dirname,
@@ -77,13 +88,17 @@ exports.apply = async function apply(ctx, config = {}) {
             'calibration.json'
         );
 
-        const result = readBoard(frame.png, calibration);
+        const result = readBoard(frame.png, calibration, {
+          frames: next ? [next.png] : [],
+          learnedDir: config.learnedDir === false ? undefined :
+            path.resolve(config.learnedDir || process.env.XXL_LEARNED_DIR || path.join(os.homedir(), '.xxl-board', 'samples'))
+        });
 
         if (!result.ok) return result;
 
         return {
           ...result,
-          captureMs: frame.captureMs
+          captureMs: frame.captureMs + (next?.captureMs ?? 0)
         };
       } catch (e) {
         return {

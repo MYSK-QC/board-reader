@@ -11,7 +11,6 @@
   },
   "maxDistance": 0.3,
   "minMargin": 0.015,
-  "minSeam": 2,
   "references": [
     {
       "file": "refs/purple.png",
@@ -65,6 +64,17 @@
       "file": "refs/chick.png",
       "code": "Y",
       "label": "黄鸡"
+    },
+    {
+      "file": "refs/empty.png",
+      "code": ".",
+      "label": "空格"
+    },
+    {
+      "file": "refs/egg.png",
+      "code": "E",
+      "label": "蛋形障碍",
+      "kind": "obstacle"
     }
   ]
 }

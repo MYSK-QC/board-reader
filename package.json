@@ -1,13 +1,16 @@
 {
   "name": "dsh-plugin-xxl-board",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "type": "commonjs",
   "main": "index.js",
   "files": [
     "index.js",
     "board.cjs",
     "capture.cjs",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "calibration.json",
+    "refs/",
+    "README.md"
   ],
   "dependencies": {
     "pngjs": "^7.0.0"
@@ -19,5 +22,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "scripts": {
+    "test": "node --test"
   }
 }
