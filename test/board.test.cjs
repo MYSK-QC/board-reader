@@ -12,7 +12,7 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const calibration = path.join(dir, 'calibration.json');
   const learnedDir = path.join(dir, 'learned');
-  const tiles = Object.fromEntries(Object.entries({ P: 'purple', G: 'green', Y: 'chick', R: 'red', E: 'egg', '#': 'cookie' })
+  const tiles = Object.fromEntries(Object.entries({ P: 'purple', G: 'green', Y: 'chick', R: 'red', E: 'egg', F: 'frozen-creature', K: 'key', '#': 'cookie' })
     .map(([code, file]) => [code, PNG.sync.read(fs.readFileSync(path.join(__dirname, '../refs', file + '.png')))]));
   const hole = new PNG({width: 24, height: 24});
   const novel = new PNG({width: 24, height: 24});
@@ -25,12 +25,13 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   const cookie = tiles['#'];
   tiles.C = new PNG({width: cookie.width / 2, height: cookie.height / 2});
   PNG.bitblt(cookie, tiles.C, 0, 0, tiles.C.width, tiles.C.height, 0, 0);
-  const references = 'PGYRE#~'.split('').map((code, i) => {
+  const references = 'PGYREFK#~'.split('').map((code, i) => {
     const file = i + '.png';
     fs.writeFileSync(path.join(dir, file), PNG.sync.write(tiles[code]));
     const ref = {code, file, label: code};
-    if (code === '#') ref.span = 2;
-    if (code === 'E') ref.kind = 'obstacle';
+    if ('#F'.includes(code)) ref.span = 2;
+    if ('EF'.includes(code)) ref.kind = 'obstacle';
+    if (code === 'K') ref.kind = 'special';
     return ref;
   });
   fs.writeFileSync(calibration, JSON.stringify({
@@ -45,7 +46,7 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
     grid.forEach((row, r) => [...row].forEach((code, c) => {
       if (code === '_') return;
       const source = tiles[code];
-      const span = code === '#' ? 2 : 1;
+      const span = '#F'.includes(code) ? 2 : 1;
       for (let y = 0; y < size*span; y++) {
         for (let x = 0; x < size*span; x++) {
           const offset = 4*(Math.floor(y*source.height/(size*span))*source.width + Math.floor(x*source.width/(size*span)));
@@ -80,4 +81,11 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   assert.equal(obstacles.ok, true, obstacles.reason);
   assert.equal(obstacles.grid, 'EPGY\nP?PG\nG##Y\nP##R');
   assert.equal(obstacles.cells[0].status, 'obstacle');
+
+  const frozen = frame(['EKGY', 'PGPG', 'GF_Y', 'P__R']);
+  const special = readBoard(frozen, calibration, {frames: [frozen]});
+  assert.equal(special.ok, true, special.reason);
+  assert.equal(special.grid, 'EKGY\nPGPG\nGFFY\nPFFR');
+  assert.equal(special.cells[1].status, 'special');
+  assert.equal(special.cells[9].status, 'obstacle');
 });

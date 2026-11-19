@@ -58,7 +58,7 @@
     {
       "file": "refs/frogblue.png",
       "code": "B",
-      "label": "蓝青蛙"
+      "label": "蓝色河马"
     },
     {
       "file": "refs/chick.png",
@@ -75,6 +75,143 @@
       "code": "E",
       "label": "蛋形障碍",
       "kind": "obstacle"
+    },
+    {
+      "file": "refs/key.png",
+      "code": "K",
+      "label": "钥匙",
+      "kind": "special"
+    },
+    {
+      "file": "refs/chain-end-down.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-vertical.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-up-right.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-horizontal.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-left-down.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-down-right.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-up-left.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-lock.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-tee-down.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-tee-right.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-tee-up.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-tee-left.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/chain-end-up.png",
+      "code": "L",
+      "label": "锁链",
+      "kind": "obstacle"
+    },
+    {
+      "file": "refs/frozen-creature.png",
+      "code": "F",
+      "label": "冰封大块",
+      "kind": "obstacle",
+      "span": 2
+    },
+    {
+      "file": "refs/leaf-stone.png",
+      "code": "D",
+      "label": "叶纹水滴形元素",
+      "kind": "special"
+    },
+    {
+      "file": "refs/ice-silhouette-top.png",
+      "code": "I",
+      "label": "冰块",
+      "kind": "obstacle",
+      "maxDistance": 0.008
+    },
+    {
+      "file": "refs/ice-silhouette-bottom.png",
+      "code": "I",
+      "label": "冰块",
+      "kind": "obstacle",
+      "maxDistance": 0.008
+    },
+    {
+      "file": "refs/hole-blue.png",
+      "code": "~",
+      "label": "空洞"
+    },
+    {
+      "file": "refs/chain-end-down-right.png",
+      "code": "L",
+      "label": "锁链"
+    },
+    {
+      "file": "refs/cookie-cyan.png",
+      "code": "#",
+      "label": "饼干盒",
+      "span": 2
     }
-  ]
+  ],
+  "maxDistanceByCode": {
+    "K": 0.13,
+    "L": 0.065,
+    "F": 0.105,
+    "D": 0.09,
+    "~": 0.07
+  },
+  "minMarginByCode": {
+    "L": 0.012
+  }
 }

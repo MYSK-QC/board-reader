@@ -108,7 +108,9 @@ function loadCalibration(filename) {
   const samples = [];
   const legend = {};
   const obstacles = new Set(['#', 'I']);
-  const singleCellCookies = [];
+  const specials = new Set();
+  const multiCell = new Map();
+  const singleCell = new Map();
 
   for (const ref of raw.references) {
     if (!/^[A-Z#.~]$/.test(ref.code)) {
@@ -121,58 +123,68 @@ function loadCalibration(filename) {
 
     const im = PNG.sync.read(fs.readFileSync(filename2));
     const span = ref.span || 1;
-
-    if (span !== 1 && !(span === 2 && ref.code === '#')) {
-      throw new Error('Only cookie box supports span=2');
-    }
-
-    if (span === 2) {
-      for (let r = 0; r < 2; r++) {
-        for (let c = 0; c < 2; c++) {
-          samples.push({
-            code: ref.code,
-            f: feature(
-              im,
-              c * im.width / 2,
-              r * im.height / 2,
-              im.width / 2,
-              im.height / 2
-            )
-          });
-        }
-      }
-    } else {
-      samples.push({
-        code: ref.code,
-        f: feature(im, 0, 0, im.width, im.height)
-      });
+    const {code, maxDistance} = ref;
+    if (maxDistance !== undefined &&
+        (!Number.isFinite(maxDistance) || maxDistance < 0 || maxDistance > 1)) {
+      throw new Error('Invalid reference distance: ' + ref.file);
     }
 
     if (ref.kind === 'obstacle') obstacles.add(ref.code);
-    if (ref.code === '#' && span === 1) singleCellCookies.push(samples.at(-1));
+    if (ref.kind === 'special') specials.add(ref.code);
+    if (span !== 1 && !(span === 2 && obstacles.has(ref.code))) {
+      throw new Error('Only obstacles support span=2: ' + ref.code);
+    }
+
+    if (span === 2) {
+      const w = im.width / 2;
+      const h = im.height / 2;
+      const block = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) =>
+        ({ code, maxDistance, f: feature(im, x, y, w, h) }));
+      samples.push(...block);
+      if (!multiCell.has(ref.code)) multiCell.set(ref.code, []);
+      multiCell.get(ref.code).push(block);
+    } else {
+      const sample = { code, maxDistance, f: feature(im, 0, 0, im.width, im.height) };
+      samples.push(sample);
+      if (!singleCell.has(ref.code)) singleCell.set(ref.code, []);
+      singleCell.get(ref.code).push(sample);
+    }
     legend[ref.code] = ref.label;
   }
 
-  const result = { ...raw, samples, legend, obstacles, singleCellCookies };
+  const result = { ...raw, samples, legend, obstacles, specials, multiCell, singleCell };
 
   cache = { file: filename, mtime: stat.mtimeMs, value: result };
   return result;
 }
 
-function rank(f, samples) {
+function rank(f, samples, cal) {
   const scores = new Map();
   for (const sample of samples) {
     const score = distance(f, sample.f);
+    if (cal && (sample.maxDistance !== undefined || cal.maxDistanceByCode?.[sample.code] !== undefined) &&
+        score > sampleLimit(cal, sample)) continue;
     scores.set(sample.code, Math.min(scores.get(sample.code) ?? Infinity, score));
   }
   return [...scores].sort((a, b) => a[1] - b[1]);
 }
 
-function classify(f, cal) {
-  const [best, second] = rank(f, cal.samples);
-  if (best && best[1] <= (cal.maxDistance ?? .16) &&
-      (second?.[1] ?? Infinity) - best[1] >= (cal.minMargin ?? .035)) return best[0];
+function distanceLimit(cal, code) {
+  return cal.maxDistanceByCode?.[code] ?? cal.maxDistance ?? .16;
+}
+
+function sampleLimit(cal, sample) {
+  return Math.min(sample.maxDistance ?? Infinity, distanceLimit(cal, sample.code));
+}
+
+function classifyRanked([best, second], cal) {
+  if (best && best[1] <= distanceLimit(cal, best[0]) &&
+      (second?.[1] ?? Infinity) - best[1] >= (cal.minMarginByCode?.[best[0]] ?? cal.minMargin ?? .035)) return best[0];
   return null;
+}
+
+function classify(f, cal) {
+  return classifyRanked(rank(f, cal.samples, cal), cal);
 }
 
 function scan(im, cal, lattice, keepCells = false) {
@@ -297,30 +309,34 @@ function identifyNovel(f, folder, learned) {
   }
 }
 
-function rejectPartialCookies(cells, cal) {
-  const cookies = cells.filter(cell => cell.code === '#');
+function rejectPartialObstacles(cells, cal) {
   const key = (row, col) => row + ',' + col;
-  const byPosition = new Map(cookies.map(cell => [key(cell.row, cell.col), cell]));
-  const complete = new Set();
-  for (const cell of cookies) {
-    const { row, col } = cell;
-    const block = [cell, byPosition.get(key(row, col + 1)),
-      byPosition.get(key(row + 1, col)), byPosition.get(key(row + 1, col + 1))];
-    if (block.every(Boolean)) block.forEach(part => complete.add(part));
-  }
-  for (const cell of cookies) {
-    if (complete.has(cell)) continue;
-    const explicitlyCalibrated = cal.singleCellCookies.some(sample =>
-      cell.observations.every(f => distance(f, sample.f) <= (cal.maxDistance ?? .16)));
-    if (!explicitlyCalibrated) cell.code = null;
+  for (const [code, templates] of cal.multiCell) {
+    const candidates = cells.filter(cell => cell.code === code);
+    const byPosition = new Map(candidates.map(cell => [key(cell.row, cell.col), cell]));
+    const complete = new Set();
+    const fits = (cell, sample) => cell.observations.every(f => distance(f, sample.f) <= sampleLimit(cal, sample));
+    for (const cell of candidates) {
+      const {row, col} = cell;
+      const block = [cell, byPosition.get(key(row, col + 1)),
+        byPosition.get(key(row + 1, col)), byPosition.get(key(row + 1, col + 1))];
+      if (block.every(Boolean) && templates.some(template =>
+        block.every((part, i) => fits(part, template[i])))) {
+        block.forEach(part => complete.add(part));
+      }
+    }
+    const singles = cal.singleCell.get(code) ?? [];
+    for (const cell of candidates) {
+      if (!complete.has(cell) && !singles.some(sample => fits(cell, sample))) cell.code = null;
+    }
   }
 }
 
 function readBoard(png, calibrationFile, options = {}) {
   try {
     const reference = loadCalibration(calibrationFile);
-    const cal = { ...reference, anchors: reference.samples.filter(s =>
-      !'.~'.includes(s.code) && !reference.obstacles.has(s.code)) };
+    const nonAnchors = new Set(['.', '~', ...reference.obstacles, ...reference.specials]);
+    const cal = { ...reference, anchors: reference.samples.filter(s => !nonAnchors.has(s.code)) };
     const frames = [png, ...(options.frames ?? [])].map(data => PNG.sync.read(data));
     if (frames.some(im => im.width !== frames[0].width || im.height !== frames[0].height)) {
       return fail('Screen size changed between frames');
@@ -335,17 +351,19 @@ function readBoard(png, calibrationFile, options = {}) {
         Math.abs(other.left - cell.left) < board.s * .18 &&
         Math.abs(other.upper - cell.upper) < board.s * .18));
       const observations = [cell, ...matches];
-      const codes = observations.map(other => other && classify(other.f, cal));
+      const ranked = observations.map(other => other && rank(other.f, cal.samples, cal));
+      const codes = ranked.map(matches => matches && classifyRanked(matches, cal));
       const same = matches.every(other => other && distance(cell.f, other.f) <= .085);
       const code = same && codes.every(value => value === codes[0]) ? codes[0] : null;
-      return { ...cell, code, observations: code === '#' ? observations.map(other => other.f) : undefined,
+      return { ...cell, code, observations: cal.multiCell.has(code) ? observations.map(other => other.f) : undefined,
         novel: same && frames.length >= 2 && codes.every(value => !value) &&
-        observations.every(other => other && (rank(other.f, cal.samples)[0]?.[1] ?? 0) >
-          Math.max(cal.maxDistance ?? .16, cal.anchorDistance ?? .19) + .035) };
+        observations.every(other => other && cal.samples.every(sample =>
+          distance(other.f, sample.f) >
+            Math.max(sampleLimit(cal, sample), cal.anchorDistance ?? .19) + .035)) };
     });
-    rejectPartialCookies(stable, cal);
+    rejectPartialObstacles(stable, cal);
     const occupied = stable.filter(c => c.code && c.code !== '~');
-    if (occupied.filter(c => c.anchor).length < 4) return fail('Too few stable board cells');
+    if (occupied.filter(c => c.anchor && !nonAnchors.has(c.code)).length < 4) return fail('Too few stable board cells');
     const minRow = Math.min(...occupied.map(c => c.row));
     const maxRow = Math.max(...occupied.map(c => c.row));
     const minCol = Math.min(...occupied.map(c => c.col));
@@ -368,7 +386,7 @@ function readBoard(png, calibrationFile, options = {}) {
           x: Math.round(c.left + board.s / 2), y: Math.round(c.upper + board.s / 2),
           status: code === '~' ? 'hole' : code === '?' ? 'uncertain' : code === '!' ? 'unknown' :
             provisionalCodes.includes(code) ? 'provisional' : cal.obstacles.has(code) ? 'obstacle' :
-              code === '.' ? 'empty' : 'known'
+              cal.specials.has(code) ? 'special' : code === '.' ? 'empty' : 'known'
         };
       });
     for (const sample of learned) legend[sample.code] = sample.label;
