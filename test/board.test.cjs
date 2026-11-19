@@ -12,7 +12,7 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const calibration = path.join(dir, 'calibration.json');
   const learnedDir = path.join(dir, 'learned');
-  const tiles = Object.fromEntries(Object.entries({ P: 'purple', G: 'green', Y: 'chick', R: 'red', E: 'egg', F: 'frozen-creature', K: 'key', '#': 'cookie' })
+  const tiles = Object.fromEntries(Object.entries({ P: 'purple', G: 'green', Y: 'chick', R: 'red', E: 'egg', F: 'frozen-creature', K: 'key', U: 'blue-orb-unconfirmed', '#': 'cookie' })
     .map(([code, file]) => [code, PNG.sync.read(fs.readFileSync(path.join(__dirname, '../refs', file + '.png')))]));
   const hole = new PNG({width: 24, height: 24});
   const novel = new PNG({width: 24, height: 24});
@@ -25,13 +25,14 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   const cookie = tiles['#'];
   tiles.C = new PNG({width: cookie.width / 2, height: cookie.height / 2});
   PNG.bitblt(cookie, tiles.C, 0, 0, tiles.C.width, tiles.C.height, 0, 0);
-  const references = 'PGYREFK#~'.split('').map((code, i) => {
+  const references = 'PGYREFKU#~'.split('').map((code, i) => {
     const file = i + '.png';
     fs.writeFileSync(path.join(dir, file), PNG.sync.write(tiles[code]));
     const ref = {code, file, label: code};
     if ('#F'.includes(code)) ref.span = 2;
     if ('EF'.includes(code)) ref.kind = 'obstacle';
     if (code === 'K') ref.kind = 'special';
+    if (code === 'U') ref.kind = 'uncertain';
     return ref;
   });
   fs.writeFileSync(calibration, JSON.stringify({
@@ -78,6 +79,12 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   assert.equal(quick.cells[5].typeId, 'learned:a');
   assert.equal(quick.cells[5].movable, false);
   assert.equal(quick.cells[1].movable, true);
+  const conservative = readBoard(a, calibration, {frames: [a], learnedDir,
+    unknownAsQuestion: true, includeMovable: true});
+  assert.equal(conservative.cells[5].code, '?');
+  assert.equal(conservative.cells[5].movable, false);
+  assert.equal(conservative.cells[5].typeId, 'learned:a');
+  assert.equal(conservative.legend.a, undefined);
 
   let geometry;
   const cold = readBoard(a, calibration, {onGeometry: value => {geometry = value;}});
@@ -128,4 +135,11 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   assert.equal(special.grid, 'EKGY\nPGPG\nGFFY\nPFFR');
   assert.equal(special.cells[1].status, 'special');
   assert.equal(special.cells[9].status, 'obstacle');
+
+  const lookalike = frame(['EUGY', 'PGPG', 'GF_Y', 'P__R']);
+  const lookalikeResult = readBoard(lookalike, calibration, {includeMovable: true});
+  assert.equal(lookalikeResult.ok, true, lookalikeResult.reason);
+  assert.equal(lookalikeResult.cells[1].code, '?');
+  assert.equal(lookalikeResult.cells[1].status, 'uncertain');
+  assert.equal(lookalikeResult.cells[1].movable, false);
 });

@@ -64,8 +64,8 @@ exports.apply = async function apply(ctx, config = {}) {
           ? result.grid +
             '\nCoordinate map (screen pixels):\n' + result.coordinateMap +
             '\nLegend: ' + JSON.stringify(result.legend) +
-            (result.cells.some(c => c.code === '!' && c.typeId)
-              ? '\nExtended labels: ' + result.cells.filter(c => c.code === '!' && c.typeId)
+            (result.cells.some(c => c.code === '?' && c.status === 'provisional' && c.typeId)
+              ? '\nUnconfirmed visual labels (do not move): ' + result.cells.filter(c => c.code === '?' && c.status === 'provisional' && c.typeId)
                 .map(c => c.row + ',' + c.col + '=' + c.label + ' [' + c.typeId + ']').join(' ')
               : '') +
             `\nOrigin: (${result.x},${result.y})` +
@@ -109,6 +109,7 @@ exports.apply = async function apply(ctx, config = {}) {
         const result = readBoard(frame.image ?? frame.png, calibration, {
           frames: next ? [next.image ?? next.png] : [],
           includeMovable: true,
+          unknownAsQuestion: true,
           geometryHint: geometryBySerial.get(key),
           onGeometry(geometry, reused) {
             reusedGeometry = reused;

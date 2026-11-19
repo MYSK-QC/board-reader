@@ -232,6 +232,27 @@
       "code": "W",
       "label": "紫色企鹅目标",
       "kind": "obstacle"
+    },
+    {
+      "file": "refs/frozen-creature-dark.png",
+      "code": "F",
+      "label": "冰封大块",
+      "kind": "obstacle",
+      "span": 2
+    },
+    {
+      "file": "refs/frozen-creature-dark-lower.png",
+      "code": "F",
+      "label": "冰封大块",
+      "kind": "obstacle",
+      "span": 2
+    },
+    {
+      "file": "refs/blue-orb-unconfirmed.png",
+      "code": "U",
+      "label": "蓝色球形元素待确认",
+      "kind": "uncertain",
+      "maxDistance": 0.07
     }
   ],
   "maxDistanceByCode": {

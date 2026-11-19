@@ -110,6 +110,7 @@ function loadCalibration(filename) {
   const legend = {};
   const obstacles = new Set(['#', 'I']);
   const specials = new Set();
+  const uncertain = new Set();
   const multiCell = new Map();
   const singleCell = new Map();
 
@@ -132,6 +133,7 @@ function loadCalibration(filename) {
 
     if (ref.kind === 'obstacle') obstacles.add(ref.code);
     if (ref.kind === 'special') specials.add(ref.code);
+    if (ref.kind === 'uncertain') uncertain.add(ref.code);
     if (span !== 1 && !(span === 2 && obstacles.has(ref.code))) {
       throw new Error('Only obstacles support span=2: ' + ref.code);
     }
@@ -153,7 +155,7 @@ function loadCalibration(filename) {
     legend[ref.code] = ref.label;
   }
 
-  const result = { ...raw, samples, legend, obstacles, specials, multiCell, singleCell };
+  const result = { ...raw, samples, legend, obstacles, specials, uncertain, multiCell, singleCell };
 
   cache = { file: filename, mtime: stat.mtimeMs, value: result };
   return result;
@@ -394,7 +396,7 @@ function rejectPartialObstacles(cells, cal) {
 function readBoard(png, calibrationFile, options = {}) {
   try {
     const reference = loadCalibration(calibrationFile);
-    const nonAnchors = new Set(['.', '~', ...reference.obstacles, ...reference.specials]);
+    const nonAnchors = new Set(['.', '~', ...reference.obstacles, ...reference.specials, ...reference.uncertain]);
     const anchors = reference.samples.filter(s => !nonAnchors.has(s.code));
     const cal = { ...reference, anchors, anchorCodes: new Set(anchors.map(sample => sample.code)) };
     const frames = [png, ...(options.frames ?? [])].map(data =>
@@ -480,31 +482,39 @@ function readBoard(png, calibrationFile, options = {}) {
     const legend = { ...cal.legend, '?': '不确定', '!': '未知或调色板已满，见逐格标签', '~': '空洞' };
     const cells = stable.filter(c => inside(c, box)).map(c => {
       const entry = discoveries.get(c);
-      const code = c.code ?? entry?.code ?? (discoveries.has(c) ? '!' : '?');
+      const detected = c.code ?? entry?.code ?? (discoveries.has(c) ? '!' : '?');
+      const uncertain = cal.uncertain.has(detected);
+      const code = uncertain || (options.unknownAsQuestion && (entry || detected === '!')) ? '?' : detected;
       const result = {
         row: c.row - minRow + 1, col: c.col - minCol + 1, code,
         x: Math.round(c.left + board.s / 2), y: Math.round(c.upper + board.s / 2),
-        status: entry ? 'provisional' : code === '~' ? 'hole' : code === '?' ? 'uncertain' :
-          code === '!' ? 'unknown' : cal.obstacles.has(code) ? 'obstacle' :
+        status: entry ? 'provisional' : detected === '!' ? 'unknown' : code === '~' ? 'hole' :
+          code === '?' ? 'uncertain' : cal.obstacles.has(code) ? 'obstacle' :
             cal.specials.has(code) ? 'special' : code === '.' ? 'empty' : 'known'
       };
       if (entry) {
         result.typeId = entry.typeId;
         result.label = entry.label;
         result.color = entry.color;
-      } else if (c.code && !'.~'.includes(c.code)) {
+      } else if (c.code && !uncertain && !'.~'.includes(c.code)) {
         result.typeId = 'calibrated:' + code;
         result.label = cal.legend[code];
         result.color = cal.colors?.[code] ?? null;
-      } else if (code === '!') {
+      } else if (detected === '!') {
         result.color = visualColor(c.f);
       }
       return result;
     });
     if (options.includeMovable) for (const cell of cells) cell.movable = cell.status === 'known';
-    for (const sample of learned) {
-      if (sample.code !== '!') legend[sample.code] = sample.label;
+    if (options.unknownAsQuestion) {
+      delete legend['!'];
+      legend['?'] = '类型未确认，禁止按普通棋子移动';
+    } else {
+      for (const sample of learned) {
+        if (sample.code !== '!') legend[sample.code] = sample.label;
+      }
     }
+    for (const code of cal.uncertain) delete legend[code];
     options.onGeometry?.(geometry, Boolean(reused));
     return {
       ok: true, rows, cols, legend, cells, coordinateMap: coordinateMap(cells, cols),
