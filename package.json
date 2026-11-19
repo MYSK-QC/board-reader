@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-xxl-board",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "type": "commonjs",
   "main": "index.js",
   "files": [
@@ -16,7 +16,7 @@
     "pngjs": "^7.0.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2"
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2 || ^0.2.2-rc.1"
   },
   "dsh": {
     "bundle": {

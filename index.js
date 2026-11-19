@@ -17,9 +17,9 @@ exports.apply = async function apply(ctx, config = {}) {
 
     description:
       'Read the current 开心消消乐 board via rooted ADB. ' +
-      'Returns text grid, legend and pixel coordinates. ' +
+      'Returns a coordinate map, per-cell pixel centers, visual types and color labels. ' +
       'Ice and special tiles require calibration. ' +
-      'Never guess uncertain cells.',
+      'Call again after the board settles or when the level changes. Skip uncertain, unknown and hole cells.',
 
     parameters: {
       serial: {
@@ -34,6 +34,7 @@ exports.apply = async function apply(ctx, config = {}) {
         properties: {
           ok: { type: 'boolean' },
           grid: { type: 'string' },
+          coordinateMap: { type: 'string' },
           legend: {
             type: 'object',
             additionalProperties: true
@@ -54,7 +55,12 @@ exports.apply = async function apply(ctx, config = {}) {
         type: 'text',
         text: result.ok
           ? result.grid +
+            '\nCoordinate map (screen pixels):\n' + result.coordinateMap +
             '\nLegend: ' + JSON.stringify(result.legend) +
+            (result.cells.some(c => c.code === '!' && c.typeId)
+              ? '\nExtended labels: ' + result.cells.filter(c => c.code === '!' && c.typeId)
+                .map(c => c.row + ',' + c.col + '=' + c.label + ' [' + c.typeId + ']').join(' ')
+              : '') +
             `\nOrigin: (${result.x},${result.y})` +
             ` Cell: ${result.cellSize}px` +
             ` Capture: ${result.captureMs}ms` +

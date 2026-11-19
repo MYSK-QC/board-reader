@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { PNG } = require('pngjs');
 
 const fail = reason => ({ ok: false, reason });
@@ -252,53 +253,74 @@ function aligned(a, b, tolerance) {
 }
 
 const provisionalCodes = 'abcdefghijklmnopqrstuvwxyz0123456789';
+const hueLabels = ['红橙', '橙黄', '黄绿', '绿色', '绿色', '青绿', '青色', '蓝青', '蓝色', '蓝紫', '紫红', '红紫'];
+
+function visualColor(f) {
+  const hues = f.hist.slice(0, 12);
+  const saturation = hues.reduce((sum, part) => sum + part, 0);
+  if (saturation < .35) return null;
+  const score = hues.map((part, i) =>
+    part + .5 * (hues[(i + 11) % 12] + hues[(i + 1) % 12]));
+  const peak = Math.max(...score);
+  return peak >= saturation * .65 ? hueLabels[score.indexOf(peak)] : null;
+}
 
 function learnedSamples(folder) {
   if (!folder || !fs.existsSync(folder)) return [];
-  return fs.readdirSync(folder).sort().filter(name => /^[a-z0-9]\.json$/.test(name)).map(name => {
-    const sample = JSON.parse(fs.readFileSync(path.join(folder, name), 'utf8'));
-    if (sample.version !== 1 || sample.code !== name[0] ||
-        sample.f?.hist?.length !== 80 || sample.f?.colors?.length !== 12 ||
-        ![...sample.f.hist, ...sample.f.colors].every(Number.isFinite)) {
-      throw new Error('Invalid learned sample: ' + name);
-    }
-    return sample;
-  });
+  return fs.readdirSync(folder).sort()
+    .filter(name => /^(?:[a-z0-9]|type-[0-9a-f-]{36})\.json$/.test(name)).map(name => {
+      const key = path.basename(name, '.json');
+      const sample = JSON.parse(fs.readFileSync(path.join(folder, name), 'utf8'));
+      const code = key.length === 1 ? key : '!';
+      if (sample.version !== 1 || sample.code !== code ||
+          sample.f?.hist?.length !== 80 || sample.f?.colors?.length !== 12 ||
+          ![...sample.f.hist, ...sample.f.colors].every(Number.isFinite)) {
+        throw new Error('Invalid learned sample: ' + name);
+      }
+      return { ...sample, typeId: 'learned:' + key, color: sample.color ?? visualColor(sample.f) };
+    });
+}
+
+// null means competing templates are too close. undefined means a novel appearance.
+function matchLearned(f, samples) {
+  const [best, second] = samples.map(sample => ({sample, score: distance(f, sample.f)}))
+    .sort((a, b) => a.score - b.score);
+  if (best?.score <= .095) {
+    return (second?.score ?? Infinity) - best.score >= .025 ? best.sample : null;
+  }
+  return best?.score < .16 ? null : undefined;
 }
 
 function identifyNovel(f, folder, learned) {
-  const [best, second] = rank(f, learned);
-  if (best?.[1] <= .095) {
-    return (second?.[1] ?? Infinity) - best[1] >= .025 ? best[0] : '?';
-  }
-  if (best?.[1] < .16) return '?';
-  if (!folder) return '!';
+  const existing = matchLearned(f, learned);
+  if (existing !== undefined || !folder) return existing;
+
   fs.mkdirSync(folder, { recursive: true });
   const lock = path.join(folder, '.write.lock');
   let fd;
   try {
     fd = fs.openSync(lock, 'wx');
   } catch (error) {
-    if (error.code === 'EEXIST') return '?';
+    if (error.code === 'EEXIST') return null;
     throw error;
   }
 
   const temporary = path.join(folder, '.sample.tmp');
   try {
     learned.splice(0, learned.length, ...learnedSamples(folder));
-    const [current, alternate] = rank(f, learned);
-    if (current?.[1] <= .095) {
-      return (alternate?.[1] ?? Infinity) - current[1] >= .025 ? current[0] : '?';
-    }
-    if (current?.[1] < .16) return '?';
+    const current = matchLearned(f, learned);
+    if (current !== undefined) return current;
 
-    const code = [...provisionalCodes].find(c => !learned.some(sample => sample.code === c));
-    if (!code) return '!';
-    const sample = { version: 1, code, label: '临时类型 ' + code, f };
+    const code = [...provisionalCodes].find(c => !learned.some(sample => sample.code === c)) ?? '!';
+    const key = code === '!' ? 'type-' + randomUUID() : code;
+    const color = visualColor(f);
+    const label = '临时类型 ' + (code === '!' ? key.slice(5, 13) : code) + (color ? '（' + color + '）' : '');
+    const sample = { version: 1, code, label, color, f };
     fs.writeFileSync(temporary, JSON.stringify(sample));
-    fs.renameSync(temporary, path.join(folder, code + '.json'));
-    learned.push(sample);
-    return code;
+    fs.renameSync(temporary, path.join(folder, key + '.json'));
+    const entry = { ...sample, typeId: 'learned:' + key };
+    learned.push(entry);
+    return entry;
   } finally {
     try {
       fs.rmSync(temporary, { force: true });
@@ -307,6 +329,21 @@ function identifyNovel(f, folder, learned) {
       fs.unlinkSync(lock);
     }
   }
+}
+
+function coordinateMap(cells, cols) {
+  const span = Math.max(4, ...cells.map(cell => String(cell.x).length + 1));
+  const pad = value => String(value).padStart(span);
+  const prefix = label => label.padStart(7) + ' |';
+  const lines = [prefix('col') + cells.slice(0, cols).map(cell => pad(cell.col)).join(''),
+    prefix('x(px)') + cells.slice(0, cols).map(cell => pad(cell.x)).join(''),
+    prefix('row/y') + '-'.repeat(span * cols)];
+  for (let i = 0; i < cells.length; i += cols) {
+    const row = cells.slice(i, i + cols);
+    lines.push(prefix(row[0].row + '/' + row[0].y) +
+      row.map(cell => pad(cell.code)).join(''));
+  }
+  return lines.join('\n');
 }
 
 function rejectPartialObstacles(cells, cal) {
@@ -364,34 +401,76 @@ function readBoard(png, calibrationFile, options = {}) {
     rejectPartialObstacles(stable, cal);
     const occupied = stable.filter(c => c.code && c.code !== '~');
     if (occupied.filter(c => c.anchor && !nonAnchors.has(c.code)).length < 4) return fail('Too few stable board cells');
-    const minRow = Math.min(...occupied.map(c => c.row));
-    const maxRow = Math.max(...occupied.map(c => c.row));
-    const minCol = Math.min(...occupied.map(c => c.col));
-    const maxCol = Math.max(...occupied.map(c => c.col));
-    const rows = maxRow - minRow + 1;
-    const cols = maxCol - minCol + 1;
+    const bounds = list => ({
+      minRow: Math.min(...list.map(cell => cell.row)), maxRow: Math.max(...list.map(cell => cell.row)),
+      minCol: Math.min(...list.map(cell => cell.col)), maxCol: Math.max(...list.map(cell => cell.col))
+    });
+    const inside = (cell, box) => cell.row >= box.minRow && cell.row <= box.maxRow &&
+      cell.col >= box.minCol && cell.col <= box.maxCol;
+    const initial = bounds(occupied);
+    const near = {minRow: initial.minRow - 1, maxRow: initial.maxRow + 1,
+      minCol: initial.minCol - 1, maxCol: initial.maxCol + 1};
+    const nextTo = (cell, candidates) => candidates.some(other =>
+      Math.abs(cell.row - other.row) + Math.abs(cell.col - other.col) === 1);
+    const animalAnchors = occupied.filter(cell => cell.anchor && !nonAnchors.has(cell.code));
+    const enclosing = (cell, axis, other) =>
+      occupied.some(a => a[axis] === cell[axis] && a[other] < cell[other]) &&
+      occupied.some(a => a[axis] === cell[axis] && a[other] > cell[other]);
+
+    const novel = stable.filter(c => c.novel && inside(c, near) &&
+      c.f.hist.slice(0, 12).reduce((sum, n) => sum + n, 0) >= .35 &&
+      Math.max(...c.f.hist.slice(0, 12)) < .9);
+    const adjacentNovel = novel.filter(cell => nextTo(cell, inside(cell, initial) ? occupied : animalAnchors));
     const learned = learnedSamples(options.learnedDir);
-    const legend = { ...cal.legend, '?': '不确定', '!': '未知类型', '~': '空洞' };
-    const cells = stable.filter(c => c.row >= minRow && c.row <= maxRow && c.col >= minCol && c.col <= maxCol)
-      .map(c => {
-        // Require board evidence on opposing sides, plus a colorful foreground.
-        const enclosed = (axis, other) => occupied.some(a => a[axis] === c[axis] && a[other] < c[other]) &&
-          occupied.some(a => a[axis] === c[axis] && a[other] > c[other]);
-        const candidate = c.novel && (enclosed('row', 'col') || enclosed('col', 'row')) &&
-          c.f.hist.slice(0, 12).reduce((sum, n) => sum + n, 0) >= .35 &&
-          Math.max(...c.f.hist.slice(0, 12)) < .9;
-        const code = c.code || (candidate ? identifyNovel(c.f, options.learnedDir, learned) : '?');
-        return {
-          row: c.row - minRow + 1, col: c.col - minCol + 1, code,
-          x: Math.round(c.left + board.s / 2), y: Math.round(c.upper + board.s / 2),
-          status: code === '~' ? 'hole' : code === '?' ? 'uncertain' : code === '!' ? 'unknown' :
-            provisionalCodes.includes(code) ? 'provisional' : cal.obstacles.has(code) ? 'obstacle' :
-              cal.specials.has(code) ? 'special' : code === '.' ? 'empty' : 'known'
-        };
-      });
-    for (const sample of learned) legend[sample.code] = sample.label;
+    const discoveries = new Map();
+    for (const cell of novel) {
+      const interior = inside(cell, initial);
+      const enclosed = interior && (enclosing(cell, 'row', 'col') || enclosing(cell, 'col', 'row'));
+      const neighbors = interior ? occupied : animalAnchors;
+      const adjacent = nextTo(cell, neighbors);
+      const peers = adjacentNovel.filter(other => inside(other, initial) === interior &&
+        (interior || other.row === cell.row || other.col === cell.col) &&
+        distance(cell.f, other.f) <= .08);
+      const repeated = adjacent && peers.length >= (interior ? 2 : 3);
+      const known = interior && adjacent ? matchLearned(cell.f, learned) : undefined;
+      if (!enclosed && !repeated && !known) continue;
+      const sample = known ?? identifyNovel(cell.f, options.learnedDir, learned);
+      if (sample !== null) discoveries.set(cell, sample);
+    }
+
+    const box = bounds([...occupied, ...discoveries.keys()]);
+    const {minRow, minCol} = box;
+    const rows = box.maxRow - minRow + 1;
+    const cols = box.maxCol - minCol + 1;
+    const legend = { ...cal.legend, '?': '不确定', '!': '未知或调色板已满，见逐格标签', '~': '空洞' };
+    const cells = stable.filter(c => inside(c, box)).map(c => {
+      const entry = discoveries.get(c);
+      const code = c.code ?? entry?.code ?? (discoveries.has(c) ? '!' : '?');
+      const result = {
+        row: c.row - minRow + 1, col: c.col - minCol + 1, code,
+        x: Math.round(c.left + board.s / 2), y: Math.round(c.upper + board.s / 2),
+        status: entry ? 'provisional' : code === '~' ? 'hole' : code === '?' ? 'uncertain' :
+          code === '!' ? 'unknown' : cal.obstacles.has(code) ? 'obstacle' :
+            cal.specials.has(code) ? 'special' : code === '.' ? 'empty' : 'known'
+      };
+      if (entry) {
+        result.typeId = entry.typeId;
+        result.label = entry.label;
+        result.color = entry.color;
+      } else if (c.code && !'.~'.includes(c.code)) {
+        result.typeId = 'calibrated:' + code;
+        result.label = cal.legend[code];
+        result.color = cal.colors?.[code] ?? null;
+      } else if (code === '!') {
+        result.color = visualColor(c.f);
+      }
+      return result;
+    });
+    for (const sample of learned) {
+      if (sample.code !== '!') legend[sample.code] = sample.label;
+    }
     return {
-      ok: true, rows, cols, legend, cells,
+      ok: true, rows, cols, legend, cells, coordinateMap: coordinateMap(cells, cols),
       grid: Array.from({ length: rows }, (_, r) => cells.slice(r*cols, (r+1)*cols).map(c => c.code).join('')).join('\n'),
       x: Math.round(board.x + minCol * board.s),
       y: Math.round(board.y + minRow * board.s),

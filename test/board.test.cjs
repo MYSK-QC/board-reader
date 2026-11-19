@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { PNG } = require('pngjs');
-const { readBoard } = require('../board.cjs');
+const { readBoard, feature } = require('../board.cjs');
 
 test('irregular lattice, scaling, novelty persistence and motion', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xxl-test-'));
@@ -36,7 +36,7 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   });
   fs.writeFileSync(calibration, JSON.stringify({
     version: 1, screen: {width: 288, height: 432}, board: {x: 48, y: 144, cell: 48},
-    anchorDistance: .19, maxDistance: .15, minMargin: .025, references
+    anchorDistance: .19, maxDistance: .15, minMargin: .025, colors: {P: '紫色'}, references
   }));
 
   function frame(grid, scale = 1) {
@@ -70,6 +70,31 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   assert.equal(result.grid, '~PGY\nPaPG\nG##Y\nP##R');
   assert.deepEqual(result.cells[0], {row: 1, col: 1, code: '~', x: 72, y: 168, status: 'hole'});
   assert.deepEqual(fs.readdirSync(learnedDir), ['a.json']);
+  assert.match(result.coordinateMap, /x\(px\).*72/);
+  assert.match(result.coordinateMap, /1\/168.*~.*P/);
+  assert.equal(result.cells[1].color, '紫色');
+  assert.equal(result.cells[5].typeId, 'learned:a');
+
+  const overflowDir = path.join(dir, 'overflow');
+  fs.mkdirSync(overflowDir);
+  const filler = feature(hole, 0, 0, hole.width, hole.height);
+  for (const code of 'abcdefghijklmnopqrstuvwxyz0123456789') {
+    fs.writeFileSync(path.join(overflowDir, code + '.json'),
+      JSON.stringify({version: 1, code, label: code, f: filler}));
+  }
+  const overflow = readBoard(a, calibration, {frames: [a], learnedDir: overflowDir});
+  assert.equal(overflow.ok, true, overflow.reason);
+  assert.equal(overflow.cells[5].code, '!');
+  assert.equal(overflow.cells[5].status, 'provisional');
+  assert.match(overflow.cells[5].typeId, /^learned:type-/);
+  const reused = readBoard(a, calibration, {frames: [a], learnedDir: overflowDir});
+  assert.equal(reused.cells[5].typeId, overflow.cells[5].typeId);
+  assert.equal(fs.readdirSync(overflowDir).length, 37);
+
+  const fringe = frame(['!!!~', 'PGYR', 'GRYP', 'YPGR']);
+  const extension = readBoard(fringe, calibration, {frames: [fringe], learnedDir});
+  assert.equal(extension.ok, true, extension.reason);
+  assert.equal(extension.grid.split('\n')[0], 'aaa~');
   const scaled = frame(layout, 2);
   assert.equal(readBoard(scaled, calibration, {frames: [scaled], learnedDir}).grid, result.grid);
   const moved = readBoard(a, calibration, {frames: [frame(['~PGY','PYPG','G#_Y','P__R'])], learnedDir});
