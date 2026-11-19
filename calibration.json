@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "screen": {
+    "width": 1080,
+    "height": 2400
+  },
+  "board": {
+    "x": 39,
+    "y": 825,
+    "cell": 111
+  },
+  "maxDistance": 0.3,
+  "minMargin": 0.015,
+  "minSeam": 2,
+  "references": [
+    {
+      "file": "refs/purple.png",
+      "code": "P",
+      "label": "紫色猫头鹰"
+    },
+    {
+      "file": "refs/brown.png",
+      "code": "N",
+      "label": "棕色熊"
+    },
+    {
+      "file": "refs/red.png",
+      "code": "R",
+      "label": "红色狐狸"
+    },
+    {
+      "file": "refs/green.png",
+      "code": "G",
+      "label": "绿色青蛙"
+    },
+    {
+      "file": "refs/cookie.png",
+      "code": "#",
+      "label": "饼干盒",
+      "span": 2
+    },
+    {
+      "file": "refs/cookie2.png",
+      "code": "#",
+      "label": "饼干盒(奶茶桶)",
+      "span": 2
+    },
+    {
+      "file": "refs/cookie3.png",
+      "code": "#",
+      "label": "饼干盒(剩一块)",
+      "span": 2
+    },
+    {
+      "file": "refs/ice.png",
+      "code": "I",
+      "label": "冰块"
+    },
+    {
+      "file": "refs/frogblue.png",
+      "code": "B",
+      "label": "蓝青蛙"
+    },
+    {
+      "file": "refs/chick.png",
+      "code": "Y",
+      "label": "黄鸡"
+    }
+  ]
+}

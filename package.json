@@ -1,0 +1,23 @@
+{
+  "name": "dsh-plugin-xxl-board",
+  "version": "0.2.0",
+  "type": "commonjs",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "board.cjs",
+    "capture.cjs",
+    "cordis.patch.yml"
+  ],
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

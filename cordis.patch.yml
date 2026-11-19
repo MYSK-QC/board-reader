@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-plugin-xxl-board
+      name: dsh-plugin-xxl-board
+      config:
+        adb: adb
+        mode: auto
+        calibration: ./calibration.json
