@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { PNG } = require('pngjs');
+const { contour, contourDistance } = require('./shape.cjs');
 
 const fail = reason => ({ ok: false, reason });
 
@@ -108,6 +109,7 @@ function loadCalibration(filename) {
 
   const samples = [];
   const legend = {};
+  const outlines = new Map();
   const obstacles = new Set(['#', 'I']);
   const specials = new Set();
   const uncertain = new Set();
@@ -138,16 +140,27 @@ function loadCalibration(filename) {
       throw new Error('Only obstacles support span=2: ' + ref.code);
     }
 
+    if (ref.shapeOnly && span !== 1) throw new Error('Shape-only references must be single tiles');
+    const recordOutline = sample => {
+      if (!sample.border) return;
+      if (!outlines.has(code)) outlines.set(code, []);
+      outlines.get(code).push(sample.border);
+    };
+
     if (span === 2) {
       const w = im.width / 2;
       const h = im.height / 2;
       const block = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) =>
-        ({ code, maxDistance, f: feature(im, x, y, w, h) }));
+        ({ code, maxDistance, f: feature(im, x, y, w, h), border: contour(im, x, y, w, h) }));
       samples.push(...block);
+      block.forEach(recordOutline);
       if (!multiCell.has(ref.code)) multiCell.set(ref.code, []);
       multiCell.get(ref.code).push(block);
     } else {
-      const sample = { code, maxDistance, f: feature(im, 0, 0, im.width, im.height) };
+      const sample = { code, maxDistance, f: feature(im, 0, 0, im.width, im.height),
+        border: contour(im, 0, 0, im.width, im.height) };
+      recordOutline(sample);
+      if (ref.shapeOnly) continue;
       samples.push(sample);
       if (!singleCell.has(ref.code)) singleCell.set(ref.code, []);
       singleCell.get(ref.code).push(sample);
@@ -155,7 +168,7 @@ function loadCalibration(filename) {
     legend[ref.code] = ref.label;
   }
 
-  const result = { ...raw, samples, legend, obstacles, specials, uncertain, multiCell, singleCell };
+  const result = { ...raw, samples, legend, obstacles, specials, uncertain, multiCell, singleCell, outlines };
 
   cache = { file: filename, mtime: stat.mtimeMs, value: result };
   return result;
@@ -393,12 +406,36 @@ function rejectPartialObstacles(cells, cal) {
   }
 }
 
+function confirmContour(code, observations, frames, sizes, cal) {
+  const isAnimal = cal.anchorCodes.has(code);
+  const isIce = cal.iceCodes.has(code);
+  if (!isAnimal && !isIce) return true;
+  const references = cal.outlines.get(code) ?? [];
+
+  return observations.every((cell, index) => {
+    const s = sizes[index];
+    const outline = contour(frames[index], cell.left, cell.upper, s, s);
+    const closest = references.reduce((best, ref) => Math.min(best, contourDistance(ref, outline)), Infinity);
+    if (isIce) {
+      const animal = cal.animalOutlines.reduce((best, ref) => Math.min(best, contourDistance(ref, outline)), Infinity);
+      return closest <= .30 && animal - closest >= .016;
+    }
+    if (closest > .25) return false;
+    const ice = cal.iceOutlines.reduce((best, ref) => Math.min(best, contourDistance(ref, outline)), Infinity);
+    return ice - closest >= .028;
+  });
+}
+
 function readBoard(png, calibrationFile, options = {}) {
   try {
     const reference = loadCalibration(calibrationFile);
     const nonAnchors = new Set(['.', '~', ...reference.obstacles, ...reference.specials, ...reference.uncertain]);
     const anchors = reference.samples.filter(s => !nonAnchors.has(s.code));
-    const cal = { ...reference, anchors, anchorCodes: new Set(anchors.map(sample => sample.code)) };
+    const iceCodes = new Set(reference.contourIceCodes ?? 'I');
+    const iceOutlines = [...iceCodes].flatMap(code => reference.outlines.get(code) ?? []);
+    const anchorCodes = new Set(anchors.map(sample => sample.code));
+    const animalOutlines = [...anchorCodes].flatMap(code => reference.outlines.get(code) ?? []);
+    const cal = { ...reference, anchors, anchorCodes, iceCodes, iceOutlines, animalOutlines };
     const frames = [png, ...(options.frames ?? [])].map(data =>
       Buffer.isBuffer(data) ? PNG.sync.read(data) : data);
     if (frames.some(im => !Number.isInteger(im?.width) || im.width <= 0 ||
@@ -416,6 +453,7 @@ function readBoard(png, calibrationFile, options = {}) {
     if (boards.some(g => !g || !aligned(board, g, .17))) {
       return fail('Board lattice missing, ambiguous or moving');
     }
+    const sizes = [board, ...boards].map(g => g.s);
     const stable = board.cells.map(cell => {
       const matches = boards.map(g => g.cells.find(other =>
         Math.abs(other.left - cell.left) < board.s * .18 &&
@@ -424,7 +462,8 @@ function readBoard(png, calibrationFile, options = {}) {
       const ranked = observations.map(other => other && rank(other.f, cal.samples, cal));
       const codes = ranked.map(matches => matches && classifyRanked(matches, cal));
       const same = matches.every(other => other && distance(cell.f, other.f) <= .085);
-      const code = same && codes.every(value => value === codes[0]) ? codes[0] : null;
+      const candidate = same && codes.every(value => value === codes[0]) ? codes[0] : null;
+      const code = candidate && confirmContour(candidate, observations, frames, sizes, cal) ? candidate : null;
       return { ...cell, code, observations: cal.multiCell.has(code) ? observations.map(other => other.f) : undefined,
         novel: same && codes.every(value => !value) &&
         observations.every(other => other && cal.samples.every(sample =>

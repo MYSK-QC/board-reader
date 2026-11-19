@@ -1,7 +1,8 @@
 'use strict';
 const assert = require('node:assert/strict');
 const {test} = require('node:test');
-const {decodeRaw} = require('../capture.cjs');
+const {gzipSync} = require('node:zlib');
+const {decodeRaw, decodeGzip} = require('../capture.cjs');
 
 test('decodes Android RGBA and RGBX screenshots with either header length', () => {
   const pixels = Buffer.from([255, 0, 0, 255, 0, 255, 0, 255]);
@@ -11,8 +12,11 @@ test('decodes Android RGBA and RGBX screenshots with either header length', () =
     screenshot.writeUInt32LE(1, 4);
     screenshot.writeUInt32LE(format, 8);
     pixels.copy(screenshot, headerSize);
-    assert.deepEqual(decodeRaw(screenshot), {width: 2, height: 1, data: pixels});
+    const expected = {width: 2, height: 1, data: pixels};
+    assert.deepEqual(decodeRaw(screenshot), expected);
+    assert.deepEqual(decodeGzip(gzipSync(screenshot)), expected);
     assert.throws(() => decodeRaw(screenshot.subarray(0, -1)), /size/);
   }
   assert.throws(() => decodeRaw(Buffer.alloc(16)), /format/);
+  assert.throws(() => decodeGzip(Buffer.alloc(16)), /gzip/);
 });

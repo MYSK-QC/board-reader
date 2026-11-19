@@ -20,7 +20,7 @@ exports.apply = async function apply(ctx, config = {}) {
     description:
       'Read the current 开心消消乐 board via rooted ADB. ' +
       'Returns a coordinate map, per-cell pixel centers, visual types and color labels. ' +
-      'Ice and special tiles require calibration. ' +
+      'Animal and ice labels must pass an independent contour check. ' +
       'Use cells with movable=true. Use quick only after the board settles; use two frames for uncertain results or new types.',
 
     parameters: {

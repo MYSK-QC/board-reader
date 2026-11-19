@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { PNG } = require('pngjs');
-const { readBoard, feature } = require('../board.cjs');
+const { readBoard, feature, classify, loadCalibration } = require('../board.cjs');
 
 test('irregular lattice, scaling, novelty persistence and motion', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xxl-test-'));
@@ -135,6 +135,23 @@ test('irregular lattice, scaling, novelty persistence and motion', t => {
   assert.equal(special.grid, 'EKGY\nPGPG\nGFFY\nPFFR');
   assert.equal(special.cells[1].status, 'special');
   assert.equal(special.cells[9].status, 'obstacle');
+
+  const iceShape = PNG.sync.read(fs.readFileSync(path.join(__dirname, '../refs/ice-flower-blue.png')));
+  tiles.B = iceShape;
+  fs.writeFileSync(path.join(dir, 'decoy.png'), PNG.sync.write(iceShape));
+  const rejectDecoy = JSON.parse(fs.readFileSync(calibration, 'utf8'));
+  rejectDecoy.contourIceCodes = 'C';
+  rejectDecoy.references.push({code:'B',file:'decoy.png',label:'Hippo color candidate'},
+    {code:'C',file:'decoy.png',label:'Ice outline',kind:'obstacle',shapeOnly:true});
+  const decoyCalibration = path.join(dir, 'decoy-calibration.json');
+  fs.writeFileSync(decoyCalibration, JSON.stringify(rejectDecoy));
+  const decoy = frame(['EBGY', 'PGPG', 'GF_Y', 'P__R']);
+  assert.equal(classify(feature(PNG.sync.read(decoy), 96, 144, 48, 48),
+    loadCalibration(decoyCalibration)), 'B');
+  const twice = readBoard(decoy, decoyCalibration, {frames:[decoy],includeMovable:true});
+  assert.equal(twice.ok, true, twice.reason);
+  assert.equal(twice.cells[1].code, '?');
+  assert.equal(twice.cells[1].movable, false);
 
   const lookalike = frame(['EUGY', 'PGPG', 'GF_Y', 'P__R']);
   const lookalikeResult = readBoard(lookalike, calibration, {includeMovable: true});

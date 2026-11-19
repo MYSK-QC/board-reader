@@ -1,5 +1,6 @@
 'use strict';
 
+const { gunzipSync } = require('node:zlib');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -130,8 +131,18 @@ function decodeRaw(data) {
   return {width, height, data: data.subarray(header)};
 }
 
+function decodeGzip(data) {
+  if (data[0] !== 0x1f || data[1] !== 0x8b) throw new Error('Unsupported gzip screenshot');
+  return decodeRaw(gunzipSync(data, {maxOutputLength: MAX_SCREEN_BYTES}));
+}
+
 async function captureMode(adb, serial, mode, signal) {
   const prefix = ['-s', serial];
+
+  if (mode === 'gzip') {
+    const data = await run(adb, [...prefix, 'exec-out', 'su', '-c', 'screencap', '|', 'gzip', '-1'], 3500, signal);
+    return {image: decodeGzip(data)};
+  }
 
   if (mode === 'raw') {
     const data = await run(adb, [...prefix, 'exec-out', 'su', '-c', 'screencap'], 3500, signal);
@@ -180,17 +191,18 @@ function readProfile() {
   catch { return {}; }
 }
 
-const unsupportedRaw = new Set();
+const unsupportedModes = new Set();
 
 async function capture(options = {}) {
   const adb = options.adb || 'adb';
   const serial = await selectSerial(adb, options.serial || process.env.ANDROID_SERIAL);
   const configured = options.mode || process.env.XXL_CAPTURE || 'auto';
   const key = adb + '\0' + serial;
-  const modes = options.allowRaw && !unsupportedRaw.has(key) ? ['raw', 'pipe', 'pull'] : ['pipe', 'pull'];
+  const modes = options.allowRaw ? ['gzip', 'raw', 'pipe', 'pull'] : ['pipe', 'pull'];
+  const available = modes.filter(mode => !unsupportedModes.has(key + ':' + mode));
   const preferred = configured === 'auto' ? readProfile()[serial] : undefined;
-  if (modes.includes(preferred)) modes.unshift(...modes.splice(modes.indexOf(preferred), 1));
-  const candidates = configured === 'auto' ? modes : [configured];
+  if (available.includes(preferred)) available.unshift(...available.splice(available.indexOf(preferred), 1));
+  const candidates = configured === 'auto' ? available : [configured];
   const started = performance.now();
   let lastError;
   for (const mode of candidates) {
@@ -199,8 +211,8 @@ async function capture(options = {}) {
       return { ...frame, serial, mode, captureMs: Math.round(performance.now() - started) };
     } catch (error) {
       if (options.signal?.aborted) throw error;
-      if (mode === 'raw' && /(?:raw screenshot format|raw screenshot size)/.test(error.message)) {
-        unsupportedRaw.add(key);
+      if (['gzip','raw'].includes(mode) && /(?:gzip screenshot|raw screenshot format|raw screenshot size)/.test(error.message)) {
+        unsupportedModes.add(key + ':' + mode);
       }
       lastError = error;
     }
@@ -210,7 +222,7 @@ async function capture(options = {}) {
 
 async function benchmark(adb = 'adb', requestedSerial) {
   const serial = await selectSerial(adb, requestedSerial);
-  const samples = { raw: [], pipe: [], pull: [] };
+  const samples = { gzip: [], raw: [], pipe: [], pull: [] };
   const errors = {};
 
   // Alternate modes to reduce warm-up/order bias.
@@ -260,4 +272,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { capture, benchmark, decodeRaw };
+module.exports = { capture, benchmark, decodeRaw, decodeGzip };

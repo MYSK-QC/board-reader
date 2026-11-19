@@ -253,6 +253,54 @@
       "label": "蓝色球形元素待确认",
       "kind": "uncertain",
       "maxDistance": 0.07
+    },
+    {
+      "file": "refs/hippo-cyan.png",
+      "code": "B",
+      "label": "蓝色河马",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/hippo-dark.png",
+      "code": "B",
+      "label": "蓝色河马",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/chick-dark.png",
+      "code": "Y",
+      "label": "黄鸡",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/chick-icy.png",
+      "code": "Y",
+      "label": "黄鸡",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/ice-white.png",
+      "code": "I",
+      "label": "冰块",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/ice-white-right.png",
+      "code": "I",
+      "label": "冰块",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/ice-white-inner.png",
+      "code": "I",
+      "label": "冰块",
+      "shapeOnly": true
+    },
+    {
+      "file": "refs/bear-cyan.png",
+      "code": "N",
+      "label": "棕色熊",
+      "shapeOnly": true
     }
   ],
   "maxDistanceByCode": {
@@ -278,5 +326,6 @@
     "C": "蓝色",
     "V": "绿色",
     "W": "紫色"
-  }
+  },
+  "contourIceCodes": "IFCVU"
 }

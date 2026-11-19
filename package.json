@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-xxl-board",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "commonjs",
   "main": "index.js",
   "files": [
@@ -10,7 +10,8 @@
     "cordis.patch.yml",
     "calibration.json",
     "refs/",
-    "README.md"
+    "README.md",
+    "shape.cjs"
   ],
   "dependencies": {
     "pngjs": "^7.0.0"
